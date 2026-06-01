@@ -46,16 +46,21 @@ def _run_tectonic(master_src: str) -> CompileResult:
         )
 
 
-def compile_single(tex_path: Path) -> CompileResult:
-    """Compile a body-only .tex file by inlining it into a master document."""
-    body = tex_path.read_text(encoding="utf-8")
+def compile_body(body: str, course_name: str) -> CompileResult:
+    """Compile body-only LaTeX by inlining it into the master document."""
     master_src = _jinja_env.get_template("master.tex.j2").render(
-        course_name=_course_title(tex_path.parent.name),
+        course_name=_course_title(course_name),
         body=body,
     )
     result = _run_tectonic(master_src)
     result.line_offset = master_src.split(body)[0].count("\n")
     return result
+
+
+def compile_single(tex_path: Path) -> CompileResult:
+    """Compile a body-only .tex file by inlining it into a master document."""
+    body = tex_path.read_text(encoding="utf-8")
+    return compile_body(body, tex_path.parent.name)
 
 
 def compile_master(out_dir: Path) -> CompileResult:

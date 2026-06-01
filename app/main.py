@@ -26,7 +26,7 @@ app.include_router(jobs_router)
 app.include_router(notes_router)
 
 
-_AUTH_EXEMPT = {"/health", "/jobs/dashboard"}
+_AUTH_EXEMPT = {"/health", "/jobs/dashboard", "/jobs/editor"}
 
 
 @app.middleware("http")

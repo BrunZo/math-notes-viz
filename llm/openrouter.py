@@ -1,5 +1,6 @@
 import base64
 import os
+from collections.abc import Iterator
 from functools import lru_cache
 from pathlib import Path
 
@@ -58,3 +59,21 @@ class OpenRouterClient:
             ],
         )
         return response.choices[0].message.content
+
+    def send_prompt_stream(
+        self, model: str, system: str, user: str
+    ) -> Iterator[str]:
+        stream = self._client.chat.send(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            stream=True,
+        )
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            content = chunk.choices[0].delta.content
+            if isinstance(content, str):
+                yield content
