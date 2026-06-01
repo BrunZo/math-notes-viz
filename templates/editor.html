@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LaTeX Editor</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body { font-family: system-ui, sans-serif; background: #f5f5f5; color: #222; display: flex; flex-direction: column; }
+    header {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem 0.75rem; padding: 0.6rem 1rem;
+      background: #fff; border-bottom: 1px solid #e0e0e0;
+    }
+    header h1 { font-size: 1rem; font-weight: 600; min-width: 0; flex: 1; }
+    header code {
+      background: #f0f0f0; padding: 0.1rem 0.4rem; border-radius: 3px; font-size: 0.85rem;
+      display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; vertical-align: bottom;
+    }
+    header .spacer { flex: 1; }
+    @media (max-width: 640px) {
+      header h1 { flex-basis: 100%; }
+      header .spacer { display: none; }
+      main { flex-direction: column; }
+      .pane { border-right: none; border-bottom: 1px solid #e0e0e0; }
+    }
+    select, input[type=password] {
+      padding: 0.35rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85rem; background: #fff;
+    }
+    button {
+      padding: 0.35rem 0.9rem; border: none; border-radius: 4px; cursor: pointer;
+      font-size: 0.85rem; background: #333; color: #fff;
+    }
+    button:hover { background: #555; }
+    button.secondary { background: #fff; color: #333; border: 1px solid #ccc; }
+    button.secondary:hover { background: #f0f0f0; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .status { font-size: 0.8rem; color: #555; }
+    .status .ok { color: #2a7a2a; } .status .err { color: #c0392b; }
+    main { flex: 1; display: flex; min-height: 0; }
+    .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; border-right: 1px solid #e0e0e0; }
+    .pane:last-child { border-right: none; }
+    .CodeMirror { flex: 1; height: auto; font-size: 0.9rem; }
+    #pdf-container { flex: 1; overflow: auto; background: #888; padding: 0.75rem 0; }
+    #pdf-container canvas { display: block; margin: 0 auto 0.75rem; box-shadow: 0 1px 6px rgba(0,0,0,0.4); background: #fff; }
+    #errbar {
+      display: none; padding: 0.5rem 0.75rem; background: #f8d7da; color: #842029;
+      font-family: monospace; font-size: 0.75rem; white-space: pre-wrap;
+      max-height: 8rem; overflow: auto; border-top: 1px solid #f5c2c7;
+    }
+    #errbar.visible { display: block; }
+    /* AI panel */
+    #ai-panel {
+      position: fixed; bottom: 1rem; left: 1rem; width: 32rem; max-width: calc(100vw - 2rem);
+      background: #fff; border: 1px solid #ccc; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+      padding: 0.9rem; display: none; z-index: 50;
+    }
+    #ai-panel.visible { display: block; }
+    #ai-panel h3 { font-size: 0.8rem; text-transform: uppercase; color: #555; margin-bottom: 0.5rem; }
+    #ai-instruction { width: 100%; padding: 0.45rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; }
+    #ai-output {
+      margin-top: 0.6rem; padding: 0.5rem; background: #f7f7f7; border: 1px solid #eee; border-radius: 4px;
+      font-family: monospace; font-size: 0.8rem; white-space: pre-wrap; max-height: 14rem; overflow: auto; display: none;
+    }
+    #ai-output.visible { display: block; }
+    .ai-actions { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <button class="secondary" onclick="location.href='/jobs/dashboard'">← Dashboard</button>
+    <h1>Editing <code id="note-path">…</code></h1>
+    <div class="spacer"></div>
+    <span class="status" id="status"></span>
+    <label class="status">AI model</label>
+    <select id="model" title="model used for AI edits"></select>
+    <input type="password" id="token" placeholder="secret token" autocomplete="off" style="width:11rem">
+    <button class="secondary" onclick="loadNote()">Reload</button>
+    <button class="secondary" id="ai-btn" onclick="openAi()" title="rewrite selection (⌘/Ctrl+K)">✨ Rewrite</button>
+    <button onclick="save()">Save</button>
+  </header>
+
+  <main>
+    <div class="pane">
+      <textarea id="editor"></textarea>
+      <div id="errbar"></div>
+    </div>
+    <div class="pane">
+      <div id="pdf-container"></div>
+    </div>
+  </main>
+
+  <div id="ai-panel">
+    <h3>Rewrite selection</h3>
+    <input type="text" id="ai-instruction" placeholder="e.g. expand this proof, fix the syntax, formalize…">
+    <div id="ai-output"></div>
+    <div class="ai-actions">
+      <button id="ai-run" onclick="runEdit()">Rewrite</button>
+      <button class="secondary" id="ai-accept" onclick="acceptEdit()" disabled>Accept</button>
+      <button class="secondary" onclick="closeAi()">Cancel</button>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/stex/stex.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    const PATH = new URLSearchParams(location.search).get('path') || '';
+    document.getElementById('note-path').textContent = PATH || '(none)';
+    document.getElementById('note-path').title = PATH || '(none)';
+    const tokenEl = document.getElementById('token');
+    tokenEl.value = localStorage.getItem('notes_token') || '';
+    tokenEl.addEventListener('change', () => { localStorage.setItem('notes_token', tokenEl.value.trim()); loadModels(); });
+    function token() { return tokenEl.value.trim(); }
+    function authHeaders(extra) { return Object.assign({ 'Authorization': 'Bearer ' + token() }, extra || {}); }
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const pdfContainer = document.getElementById('pdf-container');
+    let renderToken = 0;
+
+    async function renderPdf(data) {
+      const myToken = ++renderToken;
+      // remember where the user was looking, as a fraction of total height
+      const prevRatio = pdfContainer.scrollHeight > pdfContainer.clientHeight
+        ? pdfContainer.scrollTop / pdfContainer.scrollHeight : 0;
+      const pdf = await pdfjsLib.getDocument({ data }).promise;
+      if (myToken !== renderToken) return;  // a newer compile superseded us
+      const width = pdfContainer.clientWidth - 24;
+      const frag = document.createDocumentFragment();
+      for (let n = 1; n <= pdf.numPages; n++) {
+        const page = await pdf.getPage(n);
+        if (myToken !== renderToken) return;
+        const base = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: width / base.width });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width; canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        if (myToken !== renderToken) return;
+        frag.appendChild(canvas);
+      }
+      pdfContainer.replaceChildren(frag);
+      pdfContainer.scrollTop = prevRatio * pdfContainer.scrollHeight;
+    }
+
+    const cm = CodeMirror.fromTextArea(document.getElementById('editor'), {
+      mode: 'stex', lineNumbers: true, lineWrapping: true,
+    });
+
+    const statusEl = document.getElementById('status');
+    function status(msg, cls) { statusEl.innerHTML = cls ? `<span class="${cls}">${msg}</span>` : msg; }
+
+    async function loadModels() {
+      if (!token()) return;
+      try {
+        const r = await fetch('/jobs/models', { headers: authHeaders() });
+        if (!r.ok) return;
+        const models = await r.json();
+        const sel = document.getElementById('model');
+        sel.innerHTML = models.map(m => `<option value="${m}">${m}</option>`).join('');
+      } catch (e) { console.error(e); }
+    }
+
+    async function loadNote() {
+      try {
+        const r = await fetch(`/notes/${PATH}.tex`);
+        if (r.ok) {
+          cm.setValue(await r.text());
+        } else if (r.status === 404) {
+          cm.setValue('\\chapter{}\n\n');
+          status('New note — not saved yet', 'ok');
+        }
+      } catch (e) { status(e, 'err'); }
+      compile();
+    }
+
+    async function save() {
+      if (!token()) { status('Enter token to save', 'err'); return; }
+      status('Saving…');
+      try {
+        const r = await fetch(`/jobs/note/${PATH}`, {
+          method: 'PUT', headers: authHeaders({ 'Content-Type': 'text/plain' }), body: cm.getValue(),
+        });
+        if (r.ok) status('Saved', 'ok');
+        else status(`Error ${r.status}: ${(await r.json()).detail}`, 'err');
+      } catch (e) { status(e, 'err'); }
+    }
+
+    const errbar = document.getElementById('errbar');
+    async function compile() {
+      if (!token()) { status('Enter token for live preview', 'err'); return; }
+      status('Compiling…');
+      try {
+        const r = await fetch(`/jobs/compile/${PATH}`, {
+          method: 'POST', headers: authHeaders({ 'Content-Type': 'text/plain' }), body: cm.getValue(),
+        });
+        if (r.ok) {
+          await renderPdf(await r.arrayBuffer());
+          errbar.classList.remove('visible');
+          status('Compiled', 'ok');
+        } else {
+          const detail = (await r.json()).detail || 'compile failed';
+          errbar.textContent = detail; errbar.classList.add('visible');
+          status('Compile error', 'err');
+        }
+      } catch (e) { status(e, 'err'); }
+    }
+
+    let debounceTimer;
+    cm.on('change', () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(compile, 800); });
+
+    // ---- AI selection edit ----
+    const aiPanel = document.getElementById('ai-panel');
+    const aiOutput = document.getElementById('ai-output');
+    const aiAccept = document.getElementById('ai-accept');
+    let pendingSelection = null;  // {from, to}
+
+    cm.on('cursorActivity', () => {
+      if (cm.somethingSelected() && !aiPanel.classList.contains('visible')) {
+        // show panel lazily; user opens via keyboard or just selecting then typing
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k' && cm.somethingSelected()) {
+        e.preventDefault(); openAi();
+      }
+      if (e.key === 'Escape') closeAi();
+    });
+
+    function openAi() {
+      if (!cm.somethingSelected()) { status('Select some text first', 'err'); return; }
+      pendingSelection = { from: cm.getCursor('from'), to: cm.getCursor('to') };
+      aiOutput.classList.remove('visible'); aiOutput.textContent = '';
+      aiAccept.disabled = true;
+      aiPanel.classList.add('visible');
+      document.getElementById('ai-instruction').focus();
+    }
+    function closeAi() { aiPanel.classList.remove('visible'); pendingSelection = null; }
+
+    async function runEdit() {
+      const instruction = document.getElementById('ai-instruction').value.trim();
+      if (!instruction || !pendingSelection) return;
+      if (!token()) { status('Enter token for AI edits', 'err'); return; }
+      const selection = cm.getRange(pendingSelection.from, pendingSelection.to);
+      const before = cm.getRange({ line: 0, ch: 0 }, pendingSelection.from).slice(-1500);
+      const after = cm.getRange(pendingSelection.to, { line: cm.lastLine() + 1, ch: 0 }).slice(0, 1500);
+
+      aiOutput.classList.add('visible'); aiOutput.textContent = '';
+      document.getElementById('ai-run').disabled = true;
+      try {
+        const r = await fetch('/jobs/ai/edit-span', {
+          method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            model: document.getElementById('model').value, instruction,
+            selection, context_before: before, context_after: after,
+          }),
+        });
+        if (!r.ok) { aiOutput.textContent = `Error ${r.status}: ${(await r.json()).detail}`; return; }
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const events = buf.split('\n\n');
+          buf = events.pop();
+          for (const ev of events) {
+            const line = ev.replace(/^data: /, '');
+            if (line === '[DONE]') continue;
+            aiOutput.textContent += JSON.parse(line);
+            aiOutput.scrollTop = aiOutput.scrollHeight;
+          }
+        }
+        aiAccept.disabled = false;
+      } catch (e) {
+        aiOutput.textContent = String(e);
+      } finally {
+        document.getElementById('ai-run').disabled = false;
+      }
+    }
+
+    function acceptEdit() {
+      if (!pendingSelection) return;
+      cm.replaceRange(aiOutput.textContent, pendingSelection.from, pendingSelection.to);
+      closeAi();
+      compile();
+    }
+
+    loadModels();
+    loadNote();
+  </script>
+</body>
+</html>

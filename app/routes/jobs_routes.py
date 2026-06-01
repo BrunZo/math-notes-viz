@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 from app.helpers.jobs_helpers import ALLOWED_SUFFIXES, FIDELITY_VALUES
 from app.services import jobs_services
@@ -15,6 +15,47 @@ jobs_router = APIRouter(prefix="/jobs")
 @jobs_router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
     return HTMLResponse(jobs_services.serve_dashboard())
+
+
+@jobs_router.get("/editor", response_class=HTMLResponse)
+async def editor():
+    return HTMLResponse(jobs_services.serve_editor())
+
+
+@jobs_router.put("/note/{path:path}")
+async def save_note(path: str, body: Annotated[str, Body(media_type="text/plain")]):
+    return jobs_services.save_note_tex(path, body)
+
+
+@jobs_router.delete("/note/{path:path}")
+async def delete_note(path: str):
+    return jobs_services.delete_note(path)
+
+
+@jobs_router.post("/rename/{path:path}")
+async def rename_note(path: str, to: Annotated[str, Body(embed=True)]):
+    return jobs_services.rename_note(path, to)
+
+
+@jobs_router.post("/compile/{path:path}")
+async def compile_note(path: str, body: Annotated[str, Body(media_type="text/plain")]):
+    pdf = jobs_services.compile_note_body(path, body)
+    return Response(content=pdf, media_type="application/pdf")
+
+
+@jobs_router.post("/ai/edit-span")
+async def edit_span(request: Request):
+    data = await request.json()
+    if data.get("model") not in list_models():
+        raise HTTPException(status_code=422, detail="Unknown model")
+    stream = jobs_services.stream_span_edit(
+        model=data["model"],
+        instruction=data.get("instruction", ""),
+        selection=data.get("selection", ""),
+        context_before=data.get("context_before", ""),
+        context_after=data.get("context_after", ""),
+    )
+    return StreamingResponse(stream, media_type="text/event-stream")
 
 
 @jobs_router.get("")

@@ -34,10 +34,24 @@
     table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-top: 0.25rem; }
     th { text-align: left; border-bottom: 2px solid #e0e0e0; padding: 0.4rem 0.5rem; color: #555; }
     td { padding: 0.4rem 0.5rem; border-bottom: 1px solid #f0f0f0; }
+    td button { padding: 0.2rem 0.5rem; font-size: 0.75rem; margin: 0.1rem 0.15rem 0.1rem 0; }
+    td .actions { display: flex; flex-wrap: wrap; gap: 0.15rem; }
     .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
     .badge-done    { background: #d1e7dd; color: #0a3622; }
     .badge-pending { background: #fff3cd; color: #856404; }
     .badge-error   { background: #f8d7da; color: #842029; }
+    td code { word-break: break-all; }
+    @media (max-width: 640px) {
+      body { padding: 1rem; }
+      section { padding: 1rem; }
+      .row { flex-direction: column; align-items: stretch; }
+      /* stack each job as a card so the full path is always visible */
+      table, tbody, tr, td { display: block; width: 100%; }
+      thead { display: none; }
+      tr { border: 1px solid #eee; border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.6rem; }
+      td { border: none; padding: 0.2rem 0; }
+      td code { font-size: 0.9rem; }
+    }
     #pdf-overlay {
       display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
       z-index: 100; justify-content: center; align-items: center;
@@ -61,6 +75,18 @@
     <h2>Auth</h2>
     <label for="token">Secret token</label>
     <input type="password" id="token" placeholder="paste token here" autocomplete="off">
+  </section>
+
+  <section>
+    <h2>New note</h2>
+    <div class="row">
+      <div>
+        <label>Path (e.g. topology/02)</label>
+        <input type="text" id="new-path" placeholder="course/lecture">
+      </div>
+      <button onclick="createNote()">Create &amp; edit</button>
+    </div>
+    <div class="status" id="new-status"></div>
   </section>
 
   <section>
@@ -107,7 +133,52 @@
   </div>
 
   <script>
-    function headers() { return { 'Authorization': 'Bearer ' + document.getElementById('token').value.trim() }; }
+    function token() { return document.getElementById('token').value.trim(); }
+    function headers() { return { 'Authorization': 'Bearer ' + token() }; }
+
+    function editNote(path) {
+      localStorage.setItem('notes_token', token());
+      window.open(`/jobs/editor?path=${encodeURIComponent(path)}`, '_blank');
+    }
+
+    async function createNote() {
+      const status = document.getElementById('new-status');
+      const path = document.getElementById('new-path').value.trim();
+      if (!path) { status.innerHTML = '<span class="err">Enter a path.</span>'; return; }
+      status.innerHTML = 'Creating…';
+      try {
+        const r = await fetch(`/jobs/note/${path}`, {
+          method: 'PUT', headers: Object.assign(headers(), { 'Content-Type': 'text/plain' }),
+          body: '\\chapter{}\n\n',
+        });
+        if (r.ok) { editNote(path); loadJobs(); status.innerHTML = '<span class="ok">Created.</span>'; }
+        else status.innerHTML = `<span class="err">Error ${r.status}: ${(await r.json()).detail}</span>`;
+      } catch (e) { status.innerHTML = `<span class="err">${e}</span>`; }
+    }
+
+    async function renameNote(path) {
+      const dest = prompt('Rename note to (e.g. topology/02):', path);
+      if (!dest || dest.trim() === path) return;
+      const status = document.getElementById('get-status');
+      try {
+        const r = await fetch(`/jobs/rename/${path}`, {
+          method: 'POST', headers: Object.assign(headers(), { 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ to: dest.trim() }),
+        });
+        if (r.ok) { status.innerHTML = '<span class="ok">Renamed.</span>'; loadJobs(); }
+        else status.innerHTML = `<span class="err">Error ${r.status}: ${(await r.json()).detail}</span>`;
+      } catch (e) { status.innerHTML = `<span class="err">${e}</span>`; }
+    }
+
+    async function deleteNote(path) {
+      if (!confirm(`Delete ${path}?`)) return;
+      const status = document.getElementById('get-status');
+      try {
+        const r = await fetch(`/jobs/note/${path}`, { method: 'DELETE', headers: headers() });
+        if (r.ok) { status.innerHTML = '<span class="ok">Deleted.</span>'; loadJobs(); }
+        else status.innerHTML = `<span class="err">Error ${r.status}: ${(await r.json()).detail}</span>`;
+      } catch (e) { status.innerHTML = `<span class="err">${e}</span>`; }
+    }
 
     async function loadModels() {
       try {
@@ -177,11 +248,16 @@
             html += `<tr>
               <td><code>${j.id}</code></td>
               <td><span class="badge badge-${j.status}">${j.status}</span></td>
-              <td style="white-space:nowrap">
+              <td>
                 ${j.status === 'done' ? `
+                <div class="actions">
+                  <button class="secondary" onclick="editNote('${j.id}')">✎ edit</button>
+                  <button class="secondary" onclick="renameNote('${j.id}')">rename</button>
                   <button class="secondary" onclick="getOutput('${j.id}','tex')">↓ tex</button>
                   <button class="secondary" onclick="viewPdf('${j.id}')">view pdf</button>
                   <button class="secondary" onclick="getOutput('${j.id}','pdf')">↓</button>
+                  <button class="secondary" onclick="deleteNote('${j.id}')">🗑</button>
+                </div>
                 ` : ''}
               </td>
             </tr>`;
@@ -244,7 +320,12 @@
       if (old.startsWith('blob:')) URL.revokeObjectURL(old);
     }
 
-    document.getElementById('token').addEventListener('change', () => { loadModels(); loadJobs(); });
+    document.getElementById('token').value = localStorage.getItem('notes_token') || '';
+    document.getElementById('token').addEventListener('change', () => {
+      localStorage.setItem('notes_token', token());
+      loadModels(); loadJobs();
+    });
+    loadModels();
     loadJobs();
   </script>
 </body>
